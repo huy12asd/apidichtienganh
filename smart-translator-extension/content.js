@@ -1,6 +1,6 @@
 // !! QUAN TRỌNG !!
 // URL API đã deploy trên Render của bạn
-const API_URL = "https://du-an-dich-tieng-anh-chuyen-nganh-6.onrender.com/api/translate";
+const API_URL = "https://apidichtienganh.onrender.com/api/translate";
 
 /**
  * Hàm này CHỈ LẮNG NGHE tin nhắn từ popup.js
