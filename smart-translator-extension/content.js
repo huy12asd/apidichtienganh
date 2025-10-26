@@ -4,7 +4,7 @@
 
 
 // Dùng URL này khi đã deploy lên Render
-const API_URL = "https://du-an-dich-tieng-anh-chuyen-nganh-6.onrender.com/api/translate";
+const API_URL = "https://apidichtienganh.onrender.com/api/translate";
 // --- HẾT CÀI ĐẶT ---
 
 
