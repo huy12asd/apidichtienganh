@@ -17,7 +17,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
             chrome.tabs.sendMessage(
                 tabs[0].id,
-                { action: "TRANSLATE_PAGE" },
+                { action: "translate" },
                 function(response) {
                     if (chrome.runtime.lastError) {
                         // Lỗi (ví dụ: content.js chưa được nạp hoặc trang không cho phép)
