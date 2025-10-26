@@ -1,184 +1,170 @@
-from flask import Flask, request, render_template, redirect, url_for, jsonify
+import flask
+from flask import Flask, request, jsonify
 from googletrans import Translator
-import sqlite3  # <-- THAY ĐỔI: Dùng sqlite3 thay vì pyodbc
+import sqlite3
 import re
-import os       # <-- THAY ĐỔI: Thêm 'os' để đọc PORT khi deploy
+import os
 from flask_cors import CORS
 
 app = Flask(__name__)
-CORS(app)
+# CHO PHÉP TẤT CẢ CÁC TRANG WEB GỌI API NÀY
+CORS(app) 
 translator = Translator()
 
-# <-- THAY ĐỔI: Kết nối SQLite
-# Đảm bảo file database (ví dụ: 'database1.db') nằm cùng thư mục với app.py
-# 'check_same_thread=False' là bắt buộc khi dùng SQLite với Flask
-conn = sqlite3.connect('database1.db', check_same_thread=False)
+# --- Kết nối SQLite ---
+# Lấy đường dẫn thư mục hiện tại của file app.py
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, 'database1.db')
 
+def get_db_connection():
+    try:
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        return conn
+    except sqlite3.Error as e:
+        print(f"Lỗi kết nối database: {e}")
+        return None
 
-def get_terms(module_id=None, page=1, per_page=10):
-    cursor = conn.cursor()
-    offset = (page - 1) * per_page
+# --- Logic dịch thuật ---
 
-    # 1️⃣ Lấy dữ liệu chính
-    if module_id:
-        # <-- THAY ĐỔI: Sửa cú pháp SQL Server "OFFSET...FETCH" thành "LIMIT...OFFSET" của SQLite
-        cursor.execute("""
-            SELECT id, english, vietnamese, note, boi_canh, vi_du
-            FROM Terms
-            WHERE module = ?
-            ORDER BY english ASC
-            LIMIT ? OFFSET ?
-        """, (module_id, per_page, offset)) # <-- THAY ĐỔI: Thứ tự 'per_page' và 'offset'
-        terms = cursor.fetchall()
-
-        # 2️⃣ Lấy tổng số bản ghi
-        cursor.execute("SELECT COUNT(*) FROM Terms WHERE module = ?", (module_id,))
-        total_count = cursor.fetchone()[0]
-    else:
-        # <-- THAY ĐỔI: Sửa cú pháp SQL Server "OFFSET...FETCH" thành "LIMIT...OFFSET" của SQLite
-        cursor.execute("""
-            SELECT id, english, vietnamese, note, boi_canh, vi_du, module
-            FROM Terms
-            ORDER BY english ASC
-            LIMIT ? OFFSET ?
-        """, (per_page, offset)) # <-- THAY ĐỔI: Thứ tự 'per_page' và 'offset'
-        terms = cursor.fetchall()
-
-        cursor.execute("SELECT COUNT(*) FROM Terms")
-        total_count = cursor.fetchone()[0]
-
-    total_pages = (total_count + per_page - 1) // per_page
-    return terms, total_pages
-
-
-def preprocess_terms(text, module_id=None):
-    placeholders = {}
-    lower_text = text.lower()
-    cursor = conn.cursor()
-    if module_id:
-        cursor.execute("SELECT english, vietnamese, note FROM Terms WHERE module = ?", (module_id,))
-    else:
+def get_all_terms():
+    """Lấy TẤT CẢ các thuật ngữ từ DB một lần duy nhất."""
+    conn = get_db_connection()
+    if conn is None:
+        return []
+        
+    try:
+        cursor = conn.cursor()
         cursor.execute("SELECT english, vietnamese, note FROM Terms")
+        terms_data = cursor.fetchall()
+        conn.close()
+        
+        terms_dict = {}
+        for term in terms_data:
+            terms_dict[term['english'].lower()] = {
+                'vietnamese': term['vietnamese'],
+                'note': term['note']
+            }
+        
+        sorted_terms = sorted(terms_dict.items(), key=lambda item: len(item[0]), reverse=True)
+        return sorted_terms
+    except sqlite3.Error as e:
+        print(f"Lỗi khi truy vấn Terms: {e}")
+        if conn:
+            conn.close()
+        return []
 
-    terms = cursor.fetchall()
+# Tải trước các thuật ngữ khi server khởi động
+print("Loading specialized terms from database...")
+SPECIALIZED_TERMS = get_all_terms()
+print(f"Loaded {len(SPECIALIZED_TERMS)} terms.")
 
-    for i, (english, vietnamese, note) in enumerate(terms):
-        eng_lower = english.lower()
-        if eng_lower in lower_text:
-            placeholder = f"[[TERM{i}]]"
-            # Cần xử lý cẩn thận hơn để tránh thay thế chồng chéo
-            # Tạm thời vẫn dùng replace đơn giản
-            lower_text = lower_text.replace(eng_lower, placeholder)
+def complex_preprocess(text, placeholders_map):
+    """
+    Tìm và thay thế các thuật ngữ chuyên ngành bằng placeholder.
+    Dùng regex \b (word boundary) để chỉ thay thế các từ độc lập.
+    """
+    # Nếu văn bản chỉ là khoảng trắng, bỏ qua
+    if not text.strip():
+        return text, placeholders_map
+
+    lower_text = text.lower()
+    
+    for term, data in SPECIALIZED_TERMS:
+        # Dùng regex để tìm từ/cụm từ
+        pattern = re.compile(r'\b' + re.escape(term) + r'\b', re.IGNORECASE)
+        
+        if pattern.search(lower_text):
+            placeholder_key = f"[[{term.lower()}]]"
             
-            # Tooltip: hiện english + note khi hover
-            tooltip_text = f"{english} - {note}" if note else english
-            placeholders[placeholder] = f"<span data-bs-toggle='tooltip' title='{tooltip_text}'><b>{vietnamese}</b></span>"
+            # Thay thế trên văn bản gốc (giữ nguyên hoa/thường)
+            text = pattern.sub(placeholder_key, text)
+            lower_text = pattern.sub(placeholder_key, lower_text) # Cập nhật để tìm kiếm tiếp
             
-    return lower_text, placeholders
+            # Chỉ thêm vào map nếu chưa có
+            if placeholder_key not in placeholders_map:
+                tooltip_text = f"{term.capitalize()} - {data['note']}" if data['note'] else term.capitalize()
+                placeholders_map[placeholder_key] = f"<span data-bs-toggle='tooltip' title='{tooltip_text}'><b>{data['vietnamese']}</b></span>"
 
+    return text, placeholders_map
 
-def postprocess_terms(text, placeholders):
-    for placeholder, replacement in placeholders.items():
-        pattern = re.compile(re.escape(placeholder), re.IGNORECASE)
-        text = pattern.sub(replacement, text)
+def postprocess_terms(text, placeholders_map):
+    """Thay thế các placeholder bằng HTML đã dịch."""
+    # Sắp xếp các key từ dài đến ngắn để thay thế "computer network" trước "computer"
+    sorted_keys = sorted(placeholders_map.keys(), key=len, reverse=True)
+    
+    for key in sorted_keys:
+        if key in text:
+            pattern = re.compile(re.escape(key), re.IGNORECASE)
+            text = pattern.sub(placeholders_map[key], text)
     return text
 
-@app.route("/", methods=["GET", "POST"])
+# --- API Endpoint ---
+
+@app.route("/")
 def index():
-    result = ""
-    if request.method == "POST":
-        input_text = request.form["text"]
-        module_id = request.form.get("module")  # lấy module được chọn
-
-        # Nếu module_id có giá trị thì ép về int, còn không thì để None
-        module_id = int(module_id) if module_id else None
-
-        # Nếu người dùng không nhập gì thì tránh xử lý
-        if not input_text:
-            result = "<i>Vui lòng nhập văn bản cần dịch.</i>"
-        else:
-            
-            pre_text, placeholders = preprocess_terms(input_text, module_id)
-            translated = translator.translate(pre_text, src="en", dest="vi").text
-            result = postprocess_terms(translated, placeholders)
-    return render_template("index.html", result=result)
-
-@app.route("/modules", methods=["GET", "POST"])
-def modules():
-    cursor = conn.cursor()
-
-    # Lấy danh sách tất cả module để hiển thị
-    cursor.execute("SELECT DISTINCT module FROM Terms ORDER BY module")
-    modules = [row[0] for row in cursor.fetchall()]
-
-    # Biến chứa kết quả tìm kiếm
-    search_term = None
-    results = []
-
-    if request.method == "POST":
-        search_term = request.form.get("term", "").strip()
-        if search_term:
-            cursor.execute("""
-                SELECT module, english, vietnamese, boi_canh, vi_du
-                FROM Terms
-                WHERE LOWER(english) LIKE ?
-                ORDER BY module, english
-            """, (f"%{search_term.lower()}%",)) # Placeholder ? cần một tuple
-            results = cursor.fetchall()
-
-    return render_template("modules.html",
-                           modules=modules,
-                           search_term=search_term,
-                           results=results)
-
-@app.route("/terms/<int:module_id>", methods=["GET", "POST"])
-def terms(module_id):
-    page = int(request.args.get("page", 1))
-    per_page = 10
-    cursor = conn.cursor()
-
-    query = ""
-    if request.method == "POST":
-        query = request.form.get("term", "").strip().lower()
-        cursor.execute("""
-            SELECT id, english, vietnamese, note, boi_canh, vi_du
-            FROM Terms
-            WHERE module = ? AND (LOWER(english) LIKE ? OR LOWER(vietnamese) LIKE ?)
-            ORDER BY english ASC
-        """, (module_id, f"%{query}%", f"%{query}%"))
-        terms = cursor.fetchall()
-        total_pages = 1
-    else:
-        terms, total_pages = get_terms(module_id, page, per_page)
-
-    return render_template(
-        "terms.html",
-        module_id=module_id,
-        terms=terms,
-        query=query,
-        page=page,
-        total_pages=total_pages
-    )
+    return "API Dịch thuật chuyên ngành đang hoạt động!"
 
 @app.route("/api/translate", methods=["POST"])
 def api_translate():
     data = request.json
+    texts_to_translate = data.get("texts", []) 
+
+    if not texts_to_translate:
+        return jsonify({"translated_texts": []})
+
+    placeholders_map = {}
+    preprocessed_texts = [] # Danh sách text sau khi thay thế thuật ngữ
+
+    # 1. Tiền xử lý (thay thuật ngữ bằng placeholder)
+    for text in texts_to_translate:
+        pre_text, placeholders_map = complex_preprocess(text, placeholders_map)
+        preprocessed_texts.append(pre_text)
+
+    # 2. CHUẨN BỊ GỌI GOOGLE:
+    # Chỉ gửi những text CẦN DỊCH (không rỗng, không phải chỉ là placeholder)
+    texts_to_google = []
+    indices_to_translate = [] # Lưu vị trí của các text cần dịch
     
-    # <-- THAY ĐỔI: Sửa lại logic nhận và dịch (đã bị lỗi ở phiên bản trước)
-    # Giả sử API nhận một chuỗi văn bản lớn
-    text_to_translate = data.get("text", "") 
-    if not text_to_translate.strip():
-        return jsonify({"translated_text": ""})
+    for i, text in enumerate(preprocessed_texts):
+        # Kiểm tra xem text có nội dung thực sự hay chỉ là placeholder/khoảng trắng
+        # Regex này kiểm tra xem có chữ cái (a-z) nào không
+        if re.search(r'[a-zA-Z]', text): 
+            texts_to_google.append(text)
+            indices_to_translate.append(i)
 
-    # Tạm thời không lọc theo module_id trong API, bạn có thể thêm logic này sau
-    pre_text, placeholders = preprocess_terms(text_to_translate, module_id=None)
-    translated = translator.translate(pre_text, src="en", dest="vi").text
-    final_text = postprocess_terms(translated, placeholders)
+    # 3. GỌI GOOGLE DỊCH (chỉ khi có gì đó để dịch)
+    google_translated_results = []
+    if texts_to_google:
+        try:
+            translated_objects = translator.translate(texts_to_google, src="en", dest="vi")
+            google_translated_results = [item.text for item in translated_objects]
+        except Exception as e:
+            print(f"Lỗi Google Translate: {e} - Trả về text gốc.")
+            google_translated_results = texts_to_google # Trả về text cũ nếu lỗi
+    
+    # 4. GỘP KẾT QUẢ:
+    # Gán các kết quả đã dịch trở lại đúng vị trí
+    google_map = dict(zip(indices_to_translate, google_translated_results))
+    final_google_texts = []
+    for i, text in enumerate(preprocessed_texts):
+        if i in google_map:
+            final_google_texts.append(google_map[i]) # Dùng text đã dịch
+        else:
+            final_google_texts.append(text) # Dùng text gốc (chỉ chứa placeholder/rỗng)
 
-    return jsonify({"translated_text": final_text})
+    # 5. Hậu xử lý (thay placeholder bằng HTML thuật ngữ)
+    final_texts = []
+    for text in final_google_texts:
+        final_text = postprocess_terms(text, placeholders_map)
+        final_texts.append(final_text)
 
+    return jsonify({"translated_texts": final_texts})
+
+# --- Các route web của bạn (giữ nguyên nếu cần) ---
+# ... (Bạn có thể thêm lại các route /modules và /terms ở đây) ...
 
 if __name__ == "__main__":
-    # <-- THAY ĐỔI: Đọc PORT từ biến môi trường để deploy lên Render
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+

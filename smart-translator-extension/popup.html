@@ -1,9 +1,51 @@
 <!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><title>Dịch chuyên ngành</title></head>
-<body style="min-width:200px;padding:10px;text-align:center;">
-  <h4>SmartTech Translator</h4>
-  <button id="translate" style="padding:5px 10px;">Dịch trang này</button>
-  <script src="popup.js"></script>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>SmartTech Translator</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            width: 220px;
+            padding: 10px;
+            text-align: center;
+            background-color: #f9f9f9;
+        }
+        h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            width: 100%;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        #status {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #555;
+            min-height: 1.2em;
+        }
+    </style>
+</head>
+<body>
+    <h3>SmartTech Translator</h3>
+    <button id="translate-btn">Dịch trang này</button>
+    <div id="status"></div>
+    
+    <!-- Nạp file popup.js -->
+    <script src="popup.js"></script>
 </body>
 </html>
