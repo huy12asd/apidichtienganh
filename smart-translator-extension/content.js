@@ -1,6 +1,6 @@
 // --- CẤU HÌNH ---
 // API backend (thay nếu bạn deploy URL khác)
-const API_URL = "https://apidichtienganh.onrender.com/api/translate";
+const API_URL = "http://127.0.0.1:5000/api/translate";
 
 // --- CẤU HÌNH CHIA NHỎ ---
 const CHUNK_SIZE = 30; // số đoạn mỗi batch (tối ưu nhất)
